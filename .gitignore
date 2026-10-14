@@ -1,0 +1,16 @@
+# секреты
+.env
+*.env
+!.env.example
+
+# SQLite
+*.db
+*.db-shm
+*.db-wal
+
+# сборка
+/dist/
+web/dist/
+node_modules/
+
+.DS_Store

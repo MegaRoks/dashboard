@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Вход</title>
+<!-- Единственная публичная страница: без сессии nginx отдаёт только её. Бандл дашборда здесь не грузится. -->
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+/* Подмножество токенов Grain UI */
+:root{
+  --font-sans:"Geist Variable","Geist",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+  --font-mono:"Geist Mono Variable","Geist Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --bg-page:#FAFAF9; --surface-card:#FFFFFF; --surface-inset:#F4F4F3;
+  --text-strong:#111110; --text-body:#33332F; --text-muted:#6B6B66; --text-danger:#B22A33;
+  --action-solid:#111110; --action-solid-hover:#33332F; --text-inverse:#FFFFFF;
+  --hairline:inset 0 0 0 1px rgba(17,17,16,.10);
+  --shadow-sm:0 1px 2px rgba(17,17,16,.06),0 2px 6px -2px rgba(17,17,16,.08),0 0 0 1px rgba(17,17,16,.06);
+  --shadow-raised:inset 0 1px 0 rgba(255,255,255,.14),0 1px 2px rgba(17,17,16,.20),0 2px 6px -2px rgba(17,17,16,.16);
+  --ring-focus:0 0 0 3px rgba(47,107,255,.24);
+  --ease-out:cubic-bezier(0.23,1,0.32,1);
+}
+@media (prefers-color-scheme: dark){ :root{
+  --bg-page:#0C0C0B; --surface-card:#171715; --surface-inset:#141413;
+  --text-strong:#FBFBF9; --text-body:#E8E8E4; --text-muted:#A3A39D; --text-danger:#FF8A90;
+  --action-solid:#FFFFFF; --action-solid-hover:#ECECEA; --text-inverse:#111110;
+  --hairline:inset 0 0 0 1px rgba(255,255,255,.11);
+  --shadow-sm:0 1px 2px rgba(0,0,0,.4),0 0 0 1px rgba(255,255,255,.07);
+} }
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px 16px;
+  background:var(--tg-theme-secondary-bg-color,var(--bg-page));color:var(--text-body);
+  font:14px/1.5 var(--font-sans);letter-spacing:-.005em;-webkit-font-smoothing:antialiased}
+.card{width:100%;max-width:360px;background:var(--tg-theme-bg-color,var(--surface-card));border-radius:14px;
+  box-shadow:var(--shadow-sm);padding:28px 24px;text-align:center}
+h1{margin:0 0 6px;font-size:18px;font-weight:600;letter-spacing:-.015em;color:var(--text-strong)}
+p{margin:0;color:var(--text-muted)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;width:100%;height:40px;margin-top:20px;
+  border:0;border-radius:8px;background:var(--action-solid);color:var(--text-inverse);box-shadow:var(--shadow-raised);
+  font:500 14px var(--font-sans);cursor:pointer;transition:transform 140ms var(--ease-out),background-color 160ms}
+.btn:active{transform:scale(.97)} .btn:focus-visible{outline:none;box-shadow:var(--shadow-raised),var(--ring-focus)}
+.btn[disabled]{opacity:.45;cursor:default;transform:none}
+@media (hover:hover){.btn:hover:not([disabled]){background:var(--action-solid-hover)}}
+.code{margin:20px 0 6px;padding:14px 0;border-radius:10px;background:var(--surface-inset);box-shadow:var(--hairline);
+  font:600 34px/1 var(--font-mono);letter-spacing:.18em;color:var(--text-strong);font-variant-numeric:tabular-nums}
+.meta{font-size:12px;color:var(--text-muted);font-variant-numeric:tabular-nums}
+.error{color:var(--text-danger)}
+.spinner{width:14px;height:14px;border-radius:50%;border:1.5px solid currentColor;border-top-color:transparent;
+  animation:spin 560ms linear infinite;display:inline-block;vertical-align:-2px;margin-right:6px}
+@keyframes spin{to{transform:rotate(360deg)}}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<main class="card" aria-live="polite">
+  <h1 id="title">Личный дашборд</h1>
+  <p id="text">Вход только для владельца</p>
+  <div class="code" id="code" hidden></div>
+  <div class="meta" id="meta" hidden></div>
+  <button class="btn" id="action" type="button" hidden>Войти через Telegram</button>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const tg = window.Telegram && Telegram.WebApp && Telegram.WebApp.initData ? Telegram.WebApp : null;
+
+// Куда вернуться после входа: только путь на этом сайте
+const next = (() => {
+  const n = new URLSearchParams(location.search).get("next") || "/";
+  return n.startsWith("/") && !n.startsWith("//") && !n.startsWith("/login") ? n : "/";
+})();
+
+function show({ title, text, error = false, code = null, meta = null, button = null, busy = false }) {
+  if (title) $("title").textContent = title;
+  $("text").innerHTML = "";
+  if (busy) $("text").insertAdjacentHTML("afterbegin", '<span class="spinner" aria-hidden="true"></span>');
+  $("text").append(text);
+  $("text").classList.toggle("error", error);
+  $("code").hidden = code === null; if (code !== null) $("code").textContent = code;
+  $("meta").hidden = meta === null; if (meta !== null) $("meta").textContent = meta;
+  $("action").hidden = !button; if (button) { $("action").textContent = button.label; $("action").onclick = button.onClick; $("action").disabled = false; }
+}
+
+const go = () => location.replace(next);
+const post = (path, body) => fetch(path, { method: "POST", credentials: "same-origin",
+  headers: body ? { "Content-Type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
+const message = async r => { try { return (await r.json()).message; } catch (_) { return null; } };
+
+/* ===== Внутри Telegram: initData → сессия ===== */
+async function telegramLogin() {
+  tg.ready(); tg.expand();
+  show({ text: "Входим через Telegram…", busy: true });
+  const r = await post("/auth/telegram", { initData: tg.initData }).catch(() => null);
+  if (r && r.status === 204) {
+    // Telegram Web открывает Mini App во фрейме, и браузер может не сохранить cookie — тогда редирект зациклится
+    const c = await fetch("/auth/check", { credentials: "same-origin" }).catch(() => null);
+    if (c && c.status === 204) { go(); return; }
+    show({ title: "Не получилось войти", text: "Этот клиент Telegram не сохраняет вход. Откройте дашборд в приложении Telegram или в браузере.", error: true });
+    return;
+  }
+  show({ title: r && r.status === 403 ? "Доступ запрещён" : "Не получилось войти",
+    text: (r && await message(r)) || "Нет связи с сервером", error: true });
+}
+
+/* ===== В браузере: подтверждение в боте ===== */
+let pollTimer = null, tickTimer = null;
+function stopTimers() { clearTimeout(pollTimer); clearInterval(tickTimer); }
+
+async function browserLogin() {
+  stopTimers();
+  $("action").disabled = true;
+  const r = await post("/auth/browser").catch(() => null);
+  if (!r || r.status !== 201) {
+    show({ text: (r && await message(r)) || "Нет связи с сервером", error: true,
+      button: { label: "Попробовать ещё раз", onClick: browserLogin } });
+    return;
+  }
+  const { id, code, expiresAt } = await r.json();
+  const deadline = Date.parse(expiresAt);
+  const left = () => {
+    const s = Math.max(0, Math.round((deadline - Date.now()) / 1000));
+    return `Код действует ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  };
+  show({ title: "Подтвердите вход", text: "В Telegram пришёл запрос — подтвердите, если код совпадает", code, meta: left(), busy: true });
+  tickTimer = setInterval(() => { $("meta").textContent = left(); }, 1000);
+
+  const poll = async () => {
+    const p = await fetch("/auth/browser/" + encodeURIComponent(id), { credentials: "same-origin" }).catch(() => null);
+    const status = p && p.ok ? (await p.json()).status : p && p.status === 404 ? "expired" : "retry";
+    if (status === "ok") { stopTimers(); show({ text: "Готово, открываем дашборд…", busy: true }); go(); return; }
+    if (status === "pending" || status === "retry") { pollTimer = setTimeout(poll, 2000); return; }
+    stopTimers();
+    show({ title: status === "denied" ? "Вход отклонён" : "Время вышло",
+      text: status === "denied" ? "Запрос отклонён в Telegram" : "Запрос на вход больше не действует",
+      error: status === "denied", button: { label: "Запросить вход заново", onClick: browserLogin } });
+  };
+  pollTimer = setTimeout(poll, 2000);
+}
+
+(async () => {
+  // Уже вошли — сразу в дашборд
+  const check = await fetch("/auth/check", { credentials: "same-origin" }).catch(() => null);
+  if (check && check.status === 204) { go(); return; }
+  if (tg) { telegramLogin(); return; }
+  show({ text: "Запрос на вход придёт в Telegram владельцу", button: { label: "Войти через Telegram", onClick: browserLogin } });
+})();
+</script>
+</body>
+</html>
