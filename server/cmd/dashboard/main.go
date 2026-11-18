@@ -44,7 +44,8 @@ func run(log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	bot := tgbot.New(cfg.BotToken, cfg.AllowedUserID, st, log)
+	bot := tgbot.New(cfg.BotToken, cfg.AllowedUserID, cfg.Origin+"/login", st, log)
+	bot.Setup(ctx)
 	go bot.Run(ctx)
 
 	srv := &http.Server{

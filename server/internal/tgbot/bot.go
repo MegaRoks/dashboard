@@ -26,21 +26,41 @@ type Bot struct {
 	BaseURL       string // https://api.telegram.org
 	HTTP          *http.Client
 	AllowedUserID int64
+	AppURL        string // адрес Mini App: страница входа дашборда
 	Store         *store.Store
 	Log           *slog.Logger
 	Now           func() time.Time
 }
 
-func New(token string, allowedUserID int64, st *store.Store, log *slog.Logger) *Bot {
+func New(token string, allowedUserID int64, appURL string, st *store.Store, log *slog.Logger) *Bot {
 	return &Bot{
 		Token:         token,
 		BaseURL:       "https://api.telegram.org",
 		HTTP:          &http.Client{Timeout: (pollTimeout + 20) * time.Second},
 		AllowedUserID: allowedUserID,
+		AppURL:        appURL,
 		Store:         st,
 		Log:           log,
 		Now:           time.Now,
 	}
+}
+
+// Setup настраивает чат владельца: кнопку меню, открывающую дашборд как Mini App, и список команд.
+// Всё задаётся только для чата владельца — у других пользователей бота ни кнопки, ни команд нет.
+func (b *Bot) Setup(ctx context.Context) {
+	b.callLogged(ctx, "setChatMenuButton", map[string]any{
+		"chat_id": b.AllowedUserID,
+		"menu_button": map[string]any{
+			"type": "web_app", "text": "Дашборд", "web_app": map[string]string{"url": b.AppURL},
+		},
+	})
+	b.callLogged(ctx, "setMyCommands", map[string]any{
+		"scope": map[string]any{"type": "chat", "chat_id": b.AllowedUserID},
+		"commands": []map[string]string{
+			{"command": "start", "description": "Открыть дашборд"},
+			{"command": "logout_all", "description": "Завершить все сессии"},
+		},
+	})
 }
 
 // NotifyLogin присылает владельцу запрос на вход с кнопками «Подтвердить» и «Это не я».
@@ -164,7 +184,13 @@ func (b *Bot) onMessage(ctx context.Context, m message) {
 	cmd, _, _ = strings.Cut(cmd, "@") // /start@bot_name в групповом формате
 	switch cmd {
 	case "/start", "/help":
-		b.reply(ctx, m.Chat.ID, "Бот личного дашборда: сюда приходят запросы на вход из браузера.\n\n/logout_all — завершить все сессии на всех устройствах")
+		b.callLogged(ctx, "sendMessage", map[string]any{
+			"chat_id": m.Chat.ID,
+			"text":    "Бот личного дашборда: сюда приходят запросы на вход из браузера.\n\n/logout_all — завершить все сессии на всех устройствах",
+			"reply_markup": map[string]any{"inline_keyboard": [][]map[string]any{{
+				{"text": "📊 Открыть дашборд", "web_app": map[string]string{"url": b.AppURL}},
+			}}},
+		})
 	case "/logout_all":
 		n, err := b.Store.DeleteAllSessions(ctx)
 		if err != nil {

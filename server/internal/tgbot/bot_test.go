@@ -59,7 +59,7 @@ func newBot(t *testing.T) (*Bot, *fakeTelegram, *store.Store) {
 	tg := &fakeTelegram{}
 	srv := httptest.NewServer(tg)
 	t.Cleanup(srv.Close)
-	b := New("123:token", owner, st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	b := New("123:token", owner, appURL, st, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	b.BaseURL, b.Now = srv.URL, func() time.Time { return t0 }
 	return b, tg, st
 }
@@ -176,6 +176,36 @@ func TestCommands(t *testing.T) {
 	}
 	if text := tg.calls[0].params["text"].(string); !strings.Contains(text, "Завершено сессий: 1") {
 		t.Fatalf("reply = %q", text)
+	}
+}
+
+const appURL = "https://dashboard.example/login"
+
+// Кнопка меню и команды задаются только для чата владельца, а не для всех пользователей бота.
+func TestSetupOnlyForOwner(t *testing.T) {
+	b, tg, _ := newBot(t)
+	b.Setup(context.Background())
+	if m := tg.methods(); len(m) != 2 || m[0] != "setChatMenuButton" || m[1] != "setMyCommands" {
+		t.Fatalf("calls = %v", m)
+	}
+	menu, _ := json.Marshal(tg.calls[0].params)
+	if tg.calls[0].params["chat_id"] != float64(owner) || !strings.Contains(string(menu), `"type":"web_app"`) || !strings.Contains(string(menu), appURL) {
+		t.Fatalf("menu button = %s", menu)
+	}
+	scope, _ := tg.calls[1].params["scope"].(map[string]any)
+	if scope["type"] != "chat" || scope["chat_id"] != float64(owner) {
+		t.Fatalf("commands scope = %v; must be the owner's chat only", scope)
+	}
+}
+
+func TestStartOffersMiniApp(t *testing.T) {
+	b, tg, _ := newBot(t)
+	b.handle(context.Background(), cmd(owner, "private", "/start"))
+	if len(tg.calls) != 1 || tg.calls[0].params["chat_id"] != float64(owner) {
+		t.Fatalf("calls = %+v", tg.calls)
+	}
+	if kb, _ := json.Marshal(tg.calls[0].params["reply_markup"]); !strings.Contains(string(kb), `"web_app":{"url":"`+appURL+`"}`) {
+		t.Fatalf("keyboard = %s", kb)
 	}
 }
 
