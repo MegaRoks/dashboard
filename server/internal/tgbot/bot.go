@@ -51,7 +51,7 @@ func (b *Bot) Setup(ctx context.Context) {
 	b.callLogged(ctx, "setChatMenuButton", map[string]any{
 		"chat_id": b.AllowedUserID,
 		"menu_button": map[string]any{
-			"type": "web_app", "text": "Дашборд", "web_app": map[string]string{"url": b.AppURL},
+			"type": "web_app", "text": "Dashboard", "web_app": map[string]string{"url": b.AppURL},
 		},
 	})
 	b.callLogged(ctx, "setMyCommands", map[string]any{
@@ -188,7 +188,7 @@ func (b *Bot) onMessage(ctx context.Context, m message) {
 			"chat_id": m.Chat.ID,
 			"text":    "Бот личного дашборда: сюда приходят запросы на вход из браузера.\n\n/logout_all — завершить все сессии на всех устройствах",
 			"reply_markup": map[string]any{"inline_keyboard": [][]map[string]any{{
-				{"text": "📊 Открыть дашборд", "web_app": map[string]string{"url": b.AppURL}},
+				{"text": "📊 Open dashboard", "web_app": map[string]string{"url": b.AppURL}},
 			}}},
 		})
 	case "/logout_all":
