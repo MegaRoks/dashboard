@@ -1,0 +1,41 @@
+#!/bin/sh
+# Выкладка дашборда. Сервер: /usr/local/sbin/dashboard-deploy (root:root, 755).
+#
+# Это forced command ключа деплоя из GitHub Actions: что бы ни передал клиент,
+# sshd запускает только этот скрипт. На stdin — tar.gz из workflow:
+#   dashboard   бинарник сервиса (linux/amd64)
+#   env         EnvironmentFile сервиса из секретов окружения GitHub production
+#   web/        статика: index.html, login/index.html, assets/
+set -eu
+umask 077
+
+work=$(mktemp -d /var/tmp/dashboard-deploy.XXXXXX)
+trap 'rm -rf "$work"' EXIT
+
+# Не больше 64 МБ; владельцев и права из архива не берём
+head -c 67108864 | tar -xzf - -C "$work" --no-same-owner --no-same-permissions
+
+for f in dashboard env web/index.html web/login/index.html; do
+    [ -f "$work/$f" ] || { echo "в архиве нет $f" >&2; exit 1; }
+done
+
+install -d -m 700 -o root -g root /etc/dashboard
+install -m 600 -o root -g root "$work/env" /etc/dashboard/env
+
+install -m 755 -o root -g root "$work/dashboard" /usr/local/bin/dashboard.new
+mv -f /usr/local/bin/dashboard.new /usr/local/bin/dashboard
+
+install -d -m 755 /var/www/dashboard
+rsync -a --delete --chmod=D755,F644 "$work/web/" /var/www/dashboard/
+
+systemctl restart dashboard
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+    if curl -sf http://127.0.0.1:8090/healthz > /dev/null; then
+        echo "deployed: $(date -u +%FT%TZ)"
+        exit 0
+    fi
+    sleep 1
+done
+echo "сервис не ответил на /healthz" >&2
+journalctl -u dashboard -n 30 --no-pager >&2
+exit 1

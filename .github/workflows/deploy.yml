@@ -1,0 +1,84 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Выкладки идут по очереди, а не параллельно
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: Lint
+        run: make lint
+      - name: Test
+        run: make test
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    # Секреты доставки лежат в окружении production, доступном только ветке main
+    environment: production
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: Build
+        run: make build-linux
+
+      # Секреты сервиса едут в архиве файлом env; на сервере он становится /etc/dashboard/env (root, 600)
+      - name: Bundle
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_ALLOWED_USER_ID: ${{ secrets.TELEGRAM_ALLOWED_USER_ID }}
+          TRACKS_GITHUB_TOKEN: ${{ secrets.TRACKS_GITHUB_TOKEN }}
+        run: |
+          umask 077
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_ALLOWED_USER_ID" ]; then
+            echo "::error::нет секретов TELEGRAM_BOT_TOKEN или TELEGRAM_ALLOWED_USER_ID в окружении production"
+            exit 1
+          fi
+          mkdir -p bundle/web/login
+          cp dist/dashboard bundle/
+          cp -R web/app/. bundle/web/
+          cp web/login/index.html bundle/web/login/
+          {
+            echo "TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}"
+            echo "TELEGRAM_ALLOWED_USER_ID=${TELEGRAM_ALLOWED_USER_ID}"
+            echo "GITHUB_TOKEN=${TRACKS_GITHUB_TOKEN}"
+            echo "DASHBOARD_ORIGIN=https://dashboard.apisky.org"
+          } > bundle/env
+          tar -czf bundle.tgz -C bundle .
+          rm -rf bundle
+
+      - name: Deploy
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/known_hosts ~/.ssh/deploy_key
+          # На сервере ключ привязан к /usr/local/sbin/dashboard-deploy (restrict + command=):
+          # архив уходит скрипту на stdin, ни шелла, ни других команд по этому ключу нет
+          ssh -i ~/.ssh/deploy_key -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "root@${DEPLOY_HOST}" < bundle.tgz
+          rm -f ~/.ssh/deploy_key bundle.tgz

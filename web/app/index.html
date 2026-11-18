@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Дашборд</title>
+<!-- Временная заглушка: проверяет цепочку Telegram → nginx → сессия → API. Её заменит приложение на Vite + React + Grain UI. -->
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+:root{
+  --font-sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+  --bg-page:#FAFAF9; --surface-card:#FFFFFF; --surface-inset:#F4F4F3;
+  --text-strong:#111110; --text-muted:#6B6B66; --text-danger:#B22A33;
+  --shadow-sm:0 1px 2px rgba(17,17,16,.06),0 2px 6px -2px rgba(17,17,16,.08),0 0 0 1px rgba(17,17,16,.06);
+  --teal:#0E9AA7; --blue:#2F6BFF; --orange:#D97A1E; --pink:#C2416B; --green:#12A150;
+}
+:root[data-theme="dark"]{
+  --bg-page:#0C0C0B; --surface-card:#171715; --surface-inset:#141413;
+  --text-strong:#FBFBF9; --text-muted:#A3A39D; --text-danger:#FF8A90;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.4),0 0 0 1px rgba(255,255,255,.07);
+  --teal:#3FC0CC; --blue:#8CACFF; --orange:#EDA04D; --pink:#EC7FA1; --green:#3FCB7E;
+}
+*{box-sizing:border-box}
+body{margin:0;padding:16px;background:var(--tg-theme-secondary-bg-color,var(--bg-page));color:var(--text-strong);font:14px/1.45 var(--font-sans)}
+main{max-width:560px;margin:0 auto}
+header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+h1{margin:0;font-size:20px;font-weight:600;letter-spacing:-.015em}
+.muted{color:var(--text-muted);font-size:12px}
+.card{background:var(--tg-theme-bg-color,var(--surface-card));border-radius:10px;box-shadow:var(--shadow-sm);padding:16px;margin-bottom:12px}
+.name{font-weight:600}
+.bar{height:6px;border-radius:3px;background:var(--surface-inset);overflow:hidden;margin:10px 0 6px}
+.bar i{display:block;height:100%;border-radius:3px}
+.row{display:flex;justify-content:space-between;gap:8px}
+.err{color:var(--text-danger)}
+button{font:500 13px var(--font-sans);border:0;border-radius:6px;padding:6px 12px;background:var(--surface-inset);color:var(--text-strong);cursor:pointer}
+</style>
+</head>
+<body>
+<main>
+  <header><div><h1>Дашборд</h1><div class="muted" id="who">…</div></div><button id="logout" type="button">Выйти</button></header>
+  <div id="tracks"><div class="card muted">Загружаю треки…</div></div>
+  <p class="muted">Временная версия: проверка входа и API. Полный интерфейс — следующий шаг.</p>
+</main>
+<script>
+const tg = window.Telegram && Telegram.WebApp && Telegram.WebApp.initData ? Telegram.WebApp : null;
+const dark = tg ? tg.colorScheme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+if (tg) { tg.ready(); tg.expand(); }
+
+const $ = (id) => document.getElementById(id);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+const plural = (n, a, b, c) => (n % 10 === 1 && n % 100 !== 11 ? a : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? b : c);
+
+async function api(path, init) {
+  const r = await fetch(path, { credentials: 'same-origin', ...init });
+  if (r.status === 401) { location.replace('/login?next=' + encodeURIComponent(location.pathname)); throw new Error('unauthorized'); }
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).message || r.status);
+  return r.status === 204 ? null : r.json();
+}
+
+function status(s) {
+  if (!s) return '';
+  if (s.state === 'streak') return '🔥 ' + s.streak + ' ' + plural(s.streak, 'день', 'дня', 'дней') + ' подряд';
+  if (s.state === 'gap') return s.daysSinceLastActivity + ' ' + plural(s.daysSinceLastActivity, 'день', 'дня', 'дней') + ' назад';
+  return { new: 'новый', pause: 'на паузе', done: 'выполнен' }[s.state] || '';
+}
+
+async function load() {
+  const me = await api('/api/me');
+  $('who').textContent = 'id ' + me.id + ' · вход через ' + (me.via === 'telegram' ? 'Telegram' : 'браузер');
+  const tracks = await api('/api/tracks');
+  const box = $('tracks');
+  box.textContent = '';
+  if (!tracks.length) box.appendChild(el('div', 'card muted', 'Треков пока нет'));
+  for (const t of tracks) {
+    const c = el('div', 'card');
+    c.appendChild(el('div', 'name', t.title || t.owner + '/' + t.repo));
+    if (t.error) { c.appendChild(el('div', 'err', 'Не удалось получить progress.json: ' + t.error)); box.appendChild(c); continue; }
+    if (t.goal) c.appendChild(el('div', 'muted', t.goal));
+    const pct = t.items.total ? Math.floor(t.items.done * 100 / t.items.total) : 0;
+    const bar = el('div', 'bar'), fill = el('i');
+    fill.style.width = pct + '%'; fill.style.background = 'var(--' + t.color + ')';
+    bar.appendChild(fill); c.appendChild(bar);
+    const row = el('div', 'row muted');
+    row.appendChild(el('span', '', t.items.done + ' из ' + t.items.total + ' пунктов · ' + pct + '%'));
+    row.appendChild(el('span', '', status(t.status)));
+    c.appendChild(row);
+    if (t.today) c.appendChild(el('div', '', 'Сегодня: ' + t.today.replace(/`/g, '')));
+    box.appendChild(c);
+  }
+}
+
+$('logout').addEventListener('click', async () => {
+  await api('/auth/logout', { method: 'POST' }).catch(() => {});
+  location.replace('/login');
+});
+load().catch((e) => { if (e.message !== 'unauthorized') $('tracks').replaceChildren(el('div', 'card err', 'Ошибка: ' + e.message)); });
+</script>
+</body>
+</html>

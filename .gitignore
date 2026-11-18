@@ -14,3 +14,6 @@ web/dist/
 node_modules/
 
 .DS_Store
+
+# Конфиги nginx — серверная инфраструктура, в публичный репозиторий не публикуются
+deploy/nginx/
